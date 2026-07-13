@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+build/
+dist/
+*.egg-info/
+.DS_Store
+
+# never commit anyone's dictation history
+*.json
+!package.json
+.dictlang
+history.html

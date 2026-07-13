@@ -1,0 +1,14 @@
+# VoiceType — everything runs locally on your Mac.
+rumps>=0.4.0
+pyobjc-core>=10.0
+pyobjc-framework-Cocoa>=10.0
+pyobjc-framework-Quartz>=10.0
+numpy>=1.26
+scipy>=1.11
+sounddevice>=0.4.6
+
+# Speech recognition, on-device (Apple Silicon).
+# Parakeet is the fast default; mlx-whisper is the fallback.
+mlx>=0.18
+parakeet-mlx>=0.2
+mlx-whisper>=0.4
