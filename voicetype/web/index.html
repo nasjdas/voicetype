@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>VoiceType</title>
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<div id="app" hidden>
+  <nav>
+    <div class="brand"><span class="dot"></span>VoiceType</div>
+    <button class="nav" data-view="history" aria-current="true">History</button>
+    <button class="nav" data-view="stats">Stats</button>
+    <button class="nav" data-view="words">Words</button>
+    <button class="nav" data-view="snippets">Snippets</button>
+    <button class="nav" data-view="settings">Settings</button>
+    <div class="spacer"></div>
+    <div class="foot">Everything here is on your&nbsp;machine.</div>
+  </nav>
+
+  <main>
+    <!-- history -->
+    <section id="v-history">
+      <header>
+        <h1>History</h1>
+        <input id="q" type="search" placeholder="Search everything you've said…"
+               autocomplete="off" spellcheck="false">
+      </header>
+      <div id="list"></div>
+      <div id="more-wrap"><button id="more" class="ghost" hidden>Show older</button></div>
+    </section>
+
+    <!-- stats -->
+    <section id="v-stats" hidden>
+      <header><h1>Stats</h1></header>
+      <div class="cards" id="cards"></div>
+      <div class="panel">
+        <h2>Words per day</h2>
+        <div id="chart"></div>
+      </div>
+    </section>
+
+    <!-- words -->
+    <section id="v-words" hidden>
+      <header><h1>Words</h1></header>
+      <div class="panel">
+        <h2>Your spellings</h2>
+        <p class="hint">Names and jargon, spelled the way you want them. Say
+          &ldquo;openai&rdquo; and it writes <em>OpenAI</em>.</p>
+        <div id="vocab" class="chips"></div>
+        <form id="vocab-add" class="row">
+          <input id="vocab-in" placeholder="Add a word or name…" autocomplete="off">
+          <button class="primary">Add</button>
+        </form>
+      </div>
+      <div class="panel">
+        <h2>Fix a mishearing</h2>
+        <p class="hint">When it reliably hears the wrong word, tell it the pair.
+          This fixes the text after it's written &mdash; it doesn't retrain the model,
+          and nothing about you is sent anywhere.</p>
+        <div id="corr"></div>
+        <form id="corr-add" class="row">
+          <input id="corr-wrong" placeholder="It writes…" autocomplete="off">
+          <span class="arrow">&rarr;</span>
+          <input id="corr-right" placeholder="You meant…" autocomplete="off">
+          <button class="primary">Add</button>
+        </form>
+      </div>
+    </section>
+
+    <!-- snippets -->
+    <section id="v-snippets" hidden>
+      <header><h1>Snippets</h1></header>
+      <div class="panel">
+        <h2>Say a phrase, type a block</h2>
+        <p class="hint">Say the trigger while dictating and it expands.
+          Handy for links, addresses, and the same intro you write every day.</p>
+        <div id="snips"></div>
+        <form id="snip-add" class="stack">
+          <input id="snip-trig" placeholder="When I say… (e.g. my calendar)" autocomplete="off">
+          <textarea id="snip-text" rows="3" placeholder="…type this"></textarea>
+          <button class="primary">Add snippet</button>
+        </form>
+      </div>
+    </section>
+
+    <!-- settings -->
+    <section id="v-settings" hidden>
+      <header><h1>Settings</h1></header>
+      <div class="panel">
+        <h2>Language</h2>
+        <p class="hint">Auto handles mixing two languages in one sentence.</p>
+        <div class="seg" id="lang">
+          <button data-lang="en">English</button>
+          <button data-lang="sv">Svenska</button>
+          <button data-lang="auto">Auto</button>
+        </div>
+      </div>
+      <div class="panel">
+        <h2>Start with my computer</h2>
+        <label class="check"><input type="checkbox" id="autostart">
+          <span>Launch VoiceType when I log in</span></label>
+      </div>
+      <div class="panel">
+        <h2>Shortcuts</h2>
+        <table class="keys" id="keys"></table>
+      </div>
+      <div class="panel danger">
+        <h2>Delete everything</h2>
+        <p class="hint">Erases every dictation on this machine. Can't be undone.</p>
+        <button id="clear" class="danger-btn">Delete all history</button>
+      </div>
+    </section>
+  </main>
+</div>
+
+<div id="boot">
+  <p>Open this from the VoiceType menu.</p>
+  <p class="hint">This page needs the key that the app puts in the link.</p>
+</div>
+
+<div id="toast" role="status" aria-live="polite"></div>
+<script src="/app.js"></script>
+</body>
+</html>

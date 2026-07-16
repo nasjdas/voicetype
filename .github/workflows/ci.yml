@@ -1,0 +1,154 @@
+name: CI
+
+# The Windows code was written on a Mac. This is how it gets tested: GitHub runs
+# a real Windows machine on every push, so "it imports and the Win32 calls bind"
+# stops being a hope. It cannot test a human holding a key — see TESTING.md for
+# what still needs a person.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  shared:
+    name: shared logic (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, macos-13]   # macos-13 = Intel
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install (no ML libs — the shared logic needs none)
+        run: python -m pip install --upgrade pip pyflakes
+
+      - name: Everything compiles
+        run: python -m compileall -q voicetype
+
+      - name: Lint
+        run: python -m pyflakes voicetype
+
+      - name: Text layer — the rules that shape every dictation
+        run: python -m unittest discover -s tests -v
+
+  windows:
+    name: windows — the parts only Windows can prove
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install for real, using the shipped requirements
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: No Apple libraries leaked onto Windows
+        shell: python
+        run: |
+          import importlib.util as u, sys
+          leaked = [m for m in ("mlx", "parakeet_mlx", "rumps", "objc")
+                    if u.find_spec(m) is not None]
+          if leaked:
+              sys.exit("markers failed — Windows installed: %s" % leaked)
+          print("clean: no mlx, no rumps, no pyobjc")
+
+      - name: The Windows backend imports and binds its Win32 calls
+        shell: python
+        run: |
+          from voicetype.platform.windows import (
+              WinPlatform, WinHotkeys, WinClipboard, WinKeystrokes)
+          p = WinPlatform()
+          assert p.hotkeys.modifier_name == "Right Ctrl"
+          print("platform:", p.__class__.__name__, "| modifier:", p.hotkeys.modifier_name)
+
+      - name: The clipboard actually round-trips through Win32
+        shell: python
+        run: |
+          from voicetype.platform.windows import WinClipboard
+          c = WinClipboard()
+          for s in ("hello", "åäö ÅÄÖ", "emoji 🎙 and — dashes", ""):
+              assert c.set_text(s), "set_text failed on %r" % s
+              got = c.get_text()
+              assert got == s, "round-trip broke: %r -> %r" % (s, got)
+          print("clipboard round-trips, unicode included")
+
+      - name: The keyboard hook installs and uninstalls
+        shell: python
+        run: |
+          from voicetype.platform.windows import WinHotkeys
+          h = WinHotkeys()
+          ok = h.start(lambda ev: None)
+          print("SetWindowsHookEx ->", ok)
+          h.stop()
+          assert ok, "the low-level keyboard hook would not install"
+
+      - name: The engine picker chooses ONNX on Windows
+        shell: python
+        run: |
+          from voicetype.asr import get_engine
+          e = get_engine()
+          assert e.name == "parakeet-onnx", e.name
+          print("engine:", e.name)
+
+      - name: Store + dashboard work on Windows paths
+        shell: python
+        run: |
+          from voicetype import store
+          store.add("hello from windows ci", dur=1.5, lang="en", engine="ci")
+          assert store.latest() == "hello from windows ci"
+          assert store.count() >= 1
+          s = store.stats()
+          print("store ok:", s["entries"], "entries,", s["words"], "words")
+          from voicetype import dashboard
+          url = dashboard.start(modifier="Right Ctrl", engine="parakeet-onnx")
+          import urllib.request, urllib.error, json
+          port = url.split("//127.0.0.1:")[1].split("/")[0]
+          tok = url.split("#t=")[1]
+          r = urllib.request.Request("http://127.0.0.1:%s/api/bootstrap" % port)
+          r.add_header("X-VoiceType-Token", tok)
+          d = json.loads(urllib.request.urlopen(r, timeout=5).read())
+          assert d["modifier"] == "Right Ctrl"
+          # and it must still refuse an unauthenticated caller
+          try:
+              urllib.request.urlopen("http://127.0.0.1:%s/api/bootstrap" % port, timeout=5)
+              raise SystemExit("SECURITY: dashboard served data with no token")
+          except urllib.error.HTTPError as e:
+              assert e.code == 401, e.code
+          dashboard.stop()
+          print("dashboard ok, and still refuses untokened callers")
+
+  installer:
+    name: installer parses
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: install.ps1 is valid PowerShell
+        shell: pwsh
+        run: |
+          $errs = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            "install.ps1", [ref]$null, [ref]$errs) | Out-Null
+          if ($errs) { $errs | ForEach-Object { Write-Error $_.Message }; exit 1 }
+          Write-Host "install.ps1 parses"
+      - name: The pinned Python is still downloadable
+        shell: pwsh
+        run: |
+          # python.org drops the Windows binary when a version goes security-only,
+          # and the URL starts 404ing. That would break every new install silently,
+          # so check it on every push rather than finding out from a bug report.
+          $v = (Select-String -Path install.ps1 -Pattern '\$PyVer\s*=\s*"([\d.]+)"').Matches[0].Groups[1].Value
+          foreach ($a in @("amd64","arm64")) {
+            $u = "https://www.python.org/ftp/python/$v/python-$v-$a.exe"
+            $c = (Invoke-WebRequest -Uri $u -Method Head -UseBasicParsing).StatusCode
+            if ($c -ne 200) { Write-Error "$u -> $c"; exit 1 }
+            Write-Host "$a ok"
+          }

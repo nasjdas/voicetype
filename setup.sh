@@ -1,16 +1,19 @@
 #!/bin/bash
-# One-time setup for VoiceType. Apple Silicon Mac + Python 3.10 or newer.
+# One-time setup for VoiceType on macOS. (Windows: use install.ps1.)
 set -e
 cd "$(dirname "$0")"
 
-if [ "$(uname -m)" != "arm64" ]; then
-  echo "✗ VoiceType needs an Apple Silicon Mac (M1/M2/M3/M4)."
-  echo "  The speech model runs through Apple MLX, which is Apple-Silicon only."
+# No Apple-Silicon gate any more. Intel Macs skip MLX and run the same Parakeet
+# model through ONNX Runtime instead — see requirements.txt.
+if [ "$(uname -s)" != "Darwin" ]; then
+  echo "✗ This script is for macOS."
+  echo "  On Windows, run this in PowerShell instead:"
+  echo '      powershell -ExecutionPolicy ByPass -c "irm https://raw.githubusercontent.com/nasjdas/voicetype/main/install.ps1 | iex"'
   exit 1
 fi
 
 # macOS ships Python 3.9, but the speech libraries need 3.10+. Find a real one.
-# Getting this wrong is silent and nasty: pip "succeeds", then the import fails at runtime.
+# Getting this wrong is silent and nasty: pip "succeeds", then the import fails.
 PY=""
 for c in python3.13 python3.12 python3.11 python3; do
   if command -v "$c" >/dev/null 2>&1; then
@@ -28,18 +31,26 @@ if [ -z "$PY" ]; then
   exit 1
 fi
 
-echo "→ using $($PY --version)"
+echo "→ using $($PY --version) on $(uname -m)"
 rm -rf .venv
 "$PY" -m venv .venv
 ./.venv/bin/python -m pip install --upgrade pip -q
-echo "→ installing dependencies (the ML libs are big — a few minutes the first time)"
+echo "→ installing dependencies (the speech library is big — a few minutes the first time)"
 ./.venv/bin/pip install -r requirements.txt
 
 echo "→ checking everything actually imported"
 ./.venv/bin/python - <<'CHECK'
+import platform
 import sys
+
+mods = ["rumps", "Quartz", "numpy", "scipy", "sounddevice"]
+if platform.machine() == "arm64":
+    mods += ["mlx.core", "parakeet_mlx"]      # Apple Silicon → Neural Engine
+else:
+    mods += ["onnx_asr"]                      # Intel Mac → same model via ONNX
+
 bad = []
-for m in ("rumps", "Quartz", "numpy", "scipy", "sounddevice", "mlx.core", "parakeet_mlx"):
+for m in mods:
     try:
         __import__(m)
     except Exception as e:
@@ -66,6 +77,6 @@ The FIRST time you run it, macOS asks for two permissions:
 Then: double-tap Left Option, talk, tap once to stop.
 Your words get typed wherever the cursor is.
 
-The first dictation downloads the speech model (~600 MB, once).
+The first dictation downloads the speech model (~670 MB, once).
 After that it's fully offline.
 MSG

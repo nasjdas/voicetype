@@ -1,14 +1,34 @@
-# VoiceType — everything runs locally on your Mac.
-rumps>=0.4.0
-pyobjc-core>=10.0
-pyobjc-framework-Cocoa>=10.0
-pyobjc-framework-Quartz>=10.0
+# VoiceType — everything runs locally, on your own machine.
+#
+# The markers matter. mlx now publishes Windows wheels, so without them a Windows
+# user would silently install Apple's ML stack (and, via mlx-whisper, all of
+# PyTorch — gigabytes) and get an engine that cannot run. They'd never see an
+# error; it just wouldn't work.
+
+# Shared — these run everywhere unchanged.
 numpy>=1.26
 scipy>=1.11
 sounddevice>=0.4.6
 
-# Speech recognition, on-device (Apple Silicon).
-# Parakeet is the fast default; mlx-whisper is the fallback.
-mlx>=0.18
-parakeet-mlx>=0.2
-mlx-whisper>=0.4
+# macOS — the menu bar and the event tap.
+rumps>=0.4.0                    ; sys_platform == "darwin"
+pyobjc-core>=10.0               ; sys_platform == "darwin"
+pyobjc-framework-Cocoa>=10.0    ; sys_platform == "darwin"
+pyobjc-framework-Quartz>=10.0   ; sys_platform == "darwin"
+
+# Apple Silicon — Parakeet on the Neural Engine. The fastest path there.
+# The arm64 marker is what lets Intel Macs work at all: they skip MLX and fall
+# through to the ONNX engine below, same as Windows.
+mlx>=0.18            ; sys_platform == "darwin" and platform_machine == "arm64"
+parakeet-mlx>=0.2    ; sys_platform == "darwin" and platform_machine == "arm64"
+mlx-whisper>=0.4     ; sys_platform == "darwin" and platform_machine == "arm64"
+
+# Windows — tray icon and its image library.
+pystray>=0.19        ; sys_platform == "win32"
+Pillow>=10.0         ; sys_platform == "win32"
+
+# Windows + Intel Macs — the SAME Parakeet model, run through ONNX Runtime
+# instead of MLX. Not Whisper: Whisper locks onto one language per 30-second
+# window, and a push-to-talk utterance IS one window, so it cannot handle a
+# sentence that mixes two languages. Parakeet can.
+onnx-asr[cpu,hub]>=0.12  ; sys_platform == "win32" or (sys_platform == "darwin" and platform_machine != "arm64")
