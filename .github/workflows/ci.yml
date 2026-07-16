@@ -18,7 +18,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, macos-latest, macos-13]   # macos-13 = Intel
+        # No macos-13 (Intel): GitHub is retiring those runners and the job sits
+        # queued forever, which never reports. Intel Macs run the same ONNX engine
+        # the Windows job already exercises, so the code path is covered.
+        os: [windows-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
