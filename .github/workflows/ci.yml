@@ -40,6 +40,10 @@ jobs:
   windows:
     name: windows — the parts only Windows can prove
     runs-on: windows-latest
+    # `shell: python` runs each script from a temp file, so the repo root is NOT
+    # on sys.path and `import voicetype` fails. Put it there explicitly.
+    env:
+      PYTHONPATH: ${{ github.workspace }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
