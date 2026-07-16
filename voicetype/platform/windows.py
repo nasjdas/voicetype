@@ -36,9 +36,17 @@ from .base import (ESC, KEY_V, KEY_Z, MOD, OTHER, Clipboard, Hotkeys, KeyEvent,
 user32 = ctypes.WinDLL("user32", use_last_error=True)
 kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
 
+# ctypes assumes every function returns a 32-bit int unless told otherwise. On
+# 64-bit Windows that silently truncates every HANDLE, HGLOBAL and pointer to its
+# low half — the call "succeeds" and hands back a corrupt handle, and the next
+# call on it fails for no visible reason. Declaring restype/argtypes is not
+# tidiness here; without it the clipboard simply does not work.
+ULONG_PTR = ctypes.c_ulonglong if ctypes.sizeof(ctypes.c_void_p) == 8 else ctypes.c_ulong
+
 WH_KEYBOARD_LL = 13
 WM_KEYDOWN, WM_KEYUP = 0x0100, 0x0101
 WM_SYSKEYDOWN, WM_SYSKEYUP = 0x0104, 0x0105
+WM_QUIT = 0x0012
 LLKHF_INJECTED = 0x10
 
 VK_BACK = 0x08
@@ -60,11 +68,51 @@ MOD_VK = VK_RCONTROL
 
 class KBDLLHOOKSTRUCT(ctypes.Structure):
     _fields_ = [("vkCode", wt.DWORD), ("scanCode", wt.DWORD), ("flags", wt.DWORD),
-                ("time", wt.DWORD), ("dwExtraInfo", ctypes.POINTER(wt.ULONG))]
+                ("time", wt.DWORD), ("dwExtraInfo", ULONG_PTR)]
 
 
 LowLevelKeyboardProc = ctypes.WINFUNCTYPE(
-    ctypes.c_long, ctypes.c_int, wt.WPARAM, ctypes.POINTER(KBDLLHOOKSTRUCT))
+    wt.LPARAM, ctypes.c_int, wt.WPARAM, ctypes.POINTER(KBDLLHOOKSTRUCT))
+
+# ── the signatures (see the ULONG_PTR note above — these are load-bearing) ────
+user32.OpenClipboard.argtypes = [wt.HWND]
+user32.OpenClipboard.restype = wt.BOOL
+user32.CloseClipboard.argtypes = []
+user32.CloseClipboard.restype = wt.BOOL
+user32.EmptyClipboard.argtypes = []
+user32.EmptyClipboard.restype = wt.BOOL
+user32.IsClipboardFormatAvailable.argtypes = [wt.UINT]
+user32.IsClipboardFormatAvailable.restype = wt.BOOL
+user32.GetClipboardData.argtypes = [wt.UINT]
+user32.GetClipboardData.restype = wt.HANDLE
+user32.SetClipboardData.argtypes = [wt.UINT, wt.HANDLE]
+user32.SetClipboardData.restype = wt.HANDLE
+
+kernel32.GlobalAlloc.argtypes = [wt.UINT, ctypes.c_size_t]
+kernel32.GlobalAlloc.restype = wt.HGLOBAL
+kernel32.GlobalLock.argtypes = [wt.HGLOBAL]
+kernel32.GlobalLock.restype = wt.LPVOID
+kernel32.GlobalUnlock.argtypes = [wt.HGLOBAL]
+kernel32.GlobalUnlock.restype = wt.BOOL
+kernel32.GlobalFree.argtypes = [wt.HGLOBAL]
+kernel32.GlobalFree.restype = wt.HGLOBAL
+kernel32.GetCurrentThreadId.argtypes = []
+kernel32.GetCurrentThreadId.restype = wt.DWORD
+
+user32.SetWindowsHookExW.argtypes = [ctypes.c_int, LowLevelKeyboardProc,
+                                     wt.HINSTANCE, wt.DWORD]
+user32.SetWindowsHookExW.restype = wt.HHOOK
+user32.UnhookWindowsHookEx.argtypes = [wt.HHOOK]
+user32.UnhookWindowsHookEx.restype = wt.BOOL
+user32.CallNextHookEx.argtypes = [wt.HHOOK, ctypes.c_int, wt.WPARAM,
+                                  ctypes.POINTER(KBDLLHOOKSTRUCT)]
+user32.CallNextHookEx.restype = wt.LPARAM
+user32.GetMessageW.argtypes = [ctypes.POINTER(wt.MSG), wt.HWND, wt.UINT, wt.UINT]
+user32.GetMessageW.restype = wt.BOOL
+user32.PostThreadMessageW.argtypes = [wt.DWORD, wt.UINT, wt.WPARAM, wt.LPARAM]
+user32.PostThreadMessageW.restype = wt.BOOL
+user32.GetAsyncKeyState.argtypes = [ctypes.c_int]
+user32.GetAsyncKeyState.restype = ctypes.c_short
 
 
 class WinHotkeys(Hotkeys):
@@ -139,7 +187,7 @@ class WinHotkeys(Hotkeys):
                 user32.UnhookWindowsHookEx(self._hook)
                 self._hook = None
             if self._thread_id:
-                user32.PostThreadMessageW(self._thread_id, 0x0012, 0, 0)  # WM_QUIT
+                user32.PostThreadMessageW(self._thread_id, WM_QUIT, 0, 0)
         except Exception:
             pass
 
@@ -212,15 +260,21 @@ KEYEVENTF_KEYUP = 0x0002
 
 class KEYBDINPUT(ctypes.Structure):
     _fields_ = [("wVk", wt.WORD), ("wScan", wt.WORD), ("dwFlags", wt.DWORD),
-                ("time", wt.DWORD), ("dwExtraInfo", ctypes.POINTER(wt.ULONG))]
+                ("time", wt.DWORD), ("dwExtraInfo", ULONG_PTR)]
 
 
 class _INPUTunion(ctypes.Union):
-    _fields_ = [("ki", KEYBDINPUT)]
+    # MOUSEINPUT is the largest member of the real union. Without padding to it,
+    # sizeof(INPUT) is too small and SendInput rejects every call.
+    _fields_ = [("ki", KEYBDINPUT), ("_pad", ctypes.c_byte * 32)]
 
 
 class INPUT(ctypes.Structure):
     _fields_ = [("type", wt.DWORD), ("u", _INPUTunion)]
+
+
+user32.SendInput.argtypes = [wt.UINT, ctypes.POINTER(INPUT), ctypes.c_int]
+user32.SendInput.restype = wt.UINT
 
 
 class WinKeystrokes(Keystrokes):
@@ -229,7 +283,7 @@ class WinKeystrokes(Keystrokes):
     @staticmethod
     def _send(vk, up=False):
         ki = KEYBDINPUT(wVk=vk, wScan=0, dwFlags=KEYEVENTF_KEYUP if up else 0,
-                        time=0, dwExtraInfo=None)
+                        time=0, dwExtraInfo=0)
         inp = INPUT(type=INPUT_KEYBOARD, u=_INPUTunion(ki=ki))
         user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(INPUT))
 
@@ -300,9 +354,18 @@ class WinOverlay(Overlay):
             WS_EX_TRANSPARENT = 0x00000020
             WS_EX_TOOLWINDOW = 0x00000080     # keep it out of the taskbar/alt-tab
             hwnd = int(self._root.frame(), 16)
-            cur = user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
-            user32.SetWindowLongW(hwnd, GWL_EXSTYLE,
-                                  cur | WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW)
+            # GetWindowLongW truncates the style to 32 bits on 64-bit Windows;
+            # the Ptr variants are the correct ones there.
+            get, set_ = ((user32.GetWindowLongPtrW, user32.SetWindowLongPtrW)
+                         if ctypes.sizeof(ctypes.c_void_p) == 8 else
+                         (user32.GetWindowLongW, user32.SetWindowLongW))
+            get.argtypes = [wt.HWND, ctypes.c_int]
+            get.restype = ULONG_PTR
+            set_.argtypes = [wt.HWND, ctypes.c_int, ULONG_PTR]
+            set_.restype = ULONG_PTR
+            cur = get(hwnd, GWL_EXSTYLE)
+            set_(hwnd, GWL_EXSTYLE,
+                 cur | WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW)
         except Exception:
             pass
 

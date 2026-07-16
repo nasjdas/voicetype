@@ -74,16 +74,53 @@ jobs:
           assert p.hotkeys.modifier_name == "Right Ctrl"
           print("platform:", p.__class__.__name__, "| modifier:", p.hotkeys.modifier_name)
 
+      - name: Every ctypes call declares its types
+        shell: python
+        run: |
+          # ctypes returns c_int by default, which truncates 64-bit handles to
+          # garbage — the call looks fine and the next one fails inexplicably.
+          # This caught a real bug once; keep it honest.
+          import ctypes
+          from voicetype.platform import windows as w
+          for lib, names in ((w.user32, ["OpenClipboard", "GetClipboardData",
+                                         "SetClipboardData", "SetWindowsHookExW",
+                                         "CallNextHookEx", "SendInput",
+                                         "GetAsyncKeyState"]),
+                             (w.kernel32, ["GlobalAlloc", "GlobalLock",
+                                           "GlobalFree", "GetCurrentThreadId"])):
+              for n in names:
+                  fn = getattr(lib, n)
+                  assert fn.restype is not ctypes.c_int, \
+                      "%s has the default c_int restype — it will truncate on Win64" % n
+          print("all declared")
+
       - name: The clipboard actually round-trips through Win32
         shell: python
         run: |
           from voicetype.platform.windows import WinClipboard
           c = WinClipboard()
-          for s in ("hello", "åäö ÅÄÖ", "emoji 🎙 and — dashes", ""):
-              assert c.set_text(s), "set_text failed on %r" % s
+          for s in ("hello", "åäö ÅÄÖ", "emoji 🎙 and — dashes", "x" * 100000, ""):
+              assert c.set_text(s), "set_text failed on %r" % s[:40]
               got = c.get_text()
-              assert got == s, "round-trip broke: %r -> %r" % (s, got)
-          print("clipboard round-trips, unicode included")
+              assert got == s, "round-trip broke: %r -> %r" % (s[:40], (got or "")[:40])
+          print("clipboard round-trips: unicode, emoji, 100k chars, empty")
+
+      - name: SendInput accepts our INPUT struct
+        shell: python
+        run: |
+          # If sizeof(INPUT) is wrong (the union must pad to MOUSEINPUT, its
+          # largest member) Windows rejects every call and typing silently does
+          # nothing. VK 0 is a harmless no-op key.
+          import ctypes
+          from voicetype.platform.windows import INPUT, KEYBDINPUT, _INPUTunion, user32
+          size = ctypes.sizeof(INPUT)
+          expected = 40 if ctypes.sizeof(ctypes.c_void_p) == 8 else 28
+          assert size == expected, "sizeof(INPUT)=%d, Windows expects %d" % (size, expected)
+          ki = KEYBDINPUT(wVk=0, wScan=0, dwFlags=0, time=0, dwExtraInfo=0)
+          inp = INPUT(type=1, u=_INPUTunion(ki=ki))
+          n = user32.SendInput(1, ctypes.byref(inp), size)
+          assert n == 1, "SendInput rejected the struct (returned %d)" % n
+          print("sizeof(INPUT) =", size, "— accepted")
 
       - name: The keyboard hook installs and uninstalls
         shell: python
