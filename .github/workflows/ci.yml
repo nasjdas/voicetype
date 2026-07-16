@@ -74,25 +74,33 @@ jobs:
           assert p.hotkeys.modifier_name == "Right Ctrl"
           print("platform:", p.__class__.__name__, "| modifier:", p.hotkeys.modifier_name)
 
-      - name: Every ctypes call declares its types
+      - name: Handle-returning calls are pointer-sized, not truncated
         shell: python
         run: |
-          # ctypes returns c_int by default, which truncates 64-bit handles to
-          # garbage — the call looks fine and the next one fails inexplicably.
-          # This caught a real bug once; keep it honest.
+          # ctypes defaults restype to c_int. For a function returning a 64-bit
+          # HANDLE that silently keeps only the low half: the call looks like it
+          # worked, the handle is garbage, and the NEXT call fails for no visible
+          # reason. That is the bug that broke the clipboard.
+          #
+          # Only handle/pointer returns matter. BOOL genuinely IS c_int, so a
+          # blanket "nothing may be c_int" check is wrong and flags correct code.
           import ctypes
           from voicetype.platform import windows as w
-          for lib, names in ((w.user32, ["OpenClipboard", "GetClipboardData",
-                                         "SetClipboardData", "SetWindowsHookExW",
-                                         "CallNextHookEx", "SendInput",
-                                         "GetAsyncKeyState"]),
-                             (w.kernel32, ["GlobalAlloc", "GlobalLock",
-                                           "GlobalFree", "GetCurrentThreadId"])):
-              for n in names:
-                  fn = getattr(lib, n)
-                  assert fn.restype is not ctypes.c_int, \
-                      "%s has the default c_int restype — it will truncate on Win64" % n
-          print("all declared")
+          PTR = ctypes.sizeof(ctypes.c_void_p)
+          handles = [(w.user32, "GetClipboardData"), (w.user32, "SetClipboardData"),
+                     (w.user32, "SetWindowsHookExW"), (w.user32, "CallNextHookEx"),
+                     (w.kernel32, "GlobalAlloc"), (w.kernel32, "GlobalLock"),
+                     (w.kernel32, "GlobalFree")]
+          for lib, n in handles:
+              fn = getattr(lib, n)
+              assert fn.restype is not None, "%s: no restype declared" % n
+              got = ctypes.sizeof(fn.restype)
+              assert got == PTR, \
+                  "%s returns %d bytes, a pointer is %d - it will truncate" % (n, got, PTR)
+          # And every one of these must declare argtypes, or the ARGUMENTS truncate.
+          for lib, n in handles + [(w.user32, "SendInput"), (w.user32, "OpenClipboard")]:
+              assert getattr(lib, n).argtypes is not None, "%s: no argtypes" % n
+          print("handle returns are %d bytes; argtypes declared" % PTR)
 
       - name: The clipboard actually round-trips through Win32
         shell: python
